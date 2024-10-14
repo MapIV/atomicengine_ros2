@@ -1,0 +1,66 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="use_sim_time" default="false" />
+  <arg name="lidar_frame" default="hesai" />
+  <arg name="lidar_topic" default="/sensing/lidar/concatenated/pointcloud" />
+  <arg name="lidar_height" default="2.0" />
+  <arg name="lidar_yaw" default="0.0" />
+  <arg name="lidar_pitch" default="0.0" />
+  <arg name="lidar_roll" default="0.0" />
+  <arg name="world_frame_id" default="base_link" />
+  <arg name="output_path" default="/home/map4/atomicengine_output" />
+  <arg name="detection_model" default="centerpoint" />
+
+  <set_parameter name="use_sim_time" value="$(var use_sim_time)" />
+
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="tf_base_link_to_lidar_frame" args="0.0 0.0 $(var lidar_height) $(var lidar_yaw) $(var lidar_pitch) $(var lidar_roll) base_link $(var lidar_frame)" />
+
+  <!-- Apollo Detection Model -->
+  <group if="$(eval &quot;'$(var detection_model)' == 'apollo'&quot;)">
+    <include file="$(find-pkg-share map4_lidar_apollo_instance_segmentation)/launch/lidar_apollo_instance_segmentation.launch.xml">
+      <arg name="input/pointcloud" value="$(var lidar_topic)" />
+      <arg name="output/objects" value="/clusters" />
+      <arg name="target_frame" value="base_link" />
+      <arg name="z_offset" value="-2.0" />
+      <arg name="x_offset" value="0.0" />
+    </include>
+
+    <node pkg="map4_shape_estimation" exec="shape_estimation_node" name="shape_estimation_node" output="screen">
+      <remap from="input" to="/clusters"/>
+      <remap from="objects" to="/objects_with_feature"/>
+      <param from="$(find-pkg-share map4_shape_estimation)/config/shape_estimation.param.yaml"/>
+    </node>
+
+    <node pkg="autoware_detected_object_feature_remover" exec="detected_object_feature_remover_node" name="detected_object_feature_remover_node" output="screen">
+      <remap from="~/input" to="/objects_with_feature"/>
+      <remap from="~/output" to="/detected_objects"/>
+    </node>
+  </group>
+
+  <!-- Centerpoint Detection Model -->
+  <group if="$(eval &quot;'$(var detection_model)' == 'centerpoint'&quot;)">
+    <include file="$(find-pkg-share map4_lidar_centerpoint)/launch/lidar_centerpoint.launch.xml">
+      <arg name="input/pointcloud" value="$(var lidar_topic)" />
+      <arg name="output/objects" value="/detected_objects" />
+    </include>
+  </group>
+
+  <!-- Tracking -->
+  <arg name="tracker_setting_path" default="$(find-pkg-share map4_multi_object_tracker)/config/multi_object_tracker_node.param.yaml"/>
+  <arg name="data_association_matrix_path" default="$(find-pkg-share map4_multi_object_tracker)/config/data_association_matrix.param.yaml"/>
+  <arg name="input_channels_path" default="$(find-pkg-share map4_multi_object_tracker)/config/input_channels.param.yaml"/>
+
+  <node pkg="map4_multi_object_tracker" exec="multi_object_tracker_node" name="multi_object_tracker_node" output="screen">
+    <param name="selected_input_channels" value="['detected_objects']"/>
+    <remap from="output" to="/tracked_objects"/>
+    <param from="$(var tracker_setting_path)"/>
+    <param from="$(var data_association_matrix_path)"/>
+    <param from="$(var input_channels_path)"/>
+  </node>
+
+  <node pkg="objects_to_csv" exec="tracked_objects_to_csv" output="screen">
+    <remap from="/tracked_objects" to="/tracked_objects"/>
+    <param name="csv_directory_path" value="$(var output_path)"/>
+  </node>
+
+</launch>
