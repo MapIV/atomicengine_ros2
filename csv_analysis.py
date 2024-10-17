@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser(
                     formatter_class=RawTextHelpFormatter)
 parser.add_argument('--input', type=str, required=True, help='input csv file, e.g.: /home/map4/output.csv')
 parser.add_argument('--output', type=str, required=False, help='base path for output folder, e.g.: /home/map4/output/')
-parser.add_argument('--area', type=str, default=[-90, 90, -90, 90], nargs='+', help='area for counting objects')
+parser.add_argument('--area', type=str, default=[-1e9, 1e9, -1e9, 1e9], nargs='+', help='area for counting objects')
 parser.add_argument('--exclusion_area', type=str, default=[], nargs='+', help='area for excluding objects')
 parser.add_argument('--target_id', type=str, default=None, help='generate a velocity profile for a specify target object_id such as \'Car:2\' or \'Bicycle:12\' or \'Pedestrian:6\'')
 parser.add_argument('--rate', type=float, help='rate matching the rosbag playback rate, e.g. --rate 0.2')
@@ -31,9 +31,10 @@ parser.add_argument('--velocity_threshold', type=float, default=50, help='veloci
 parser.add_argument('--acceleration_threshold', type=float, default=4, help='acceleration threshold to consider dangerous acceleration m/s^2')
 parser.add_argument('--debug', action='store_true', help='show filtering process')
 args = parser.parse_args()
-input_fp = os.path.dirname(args.input)
+input_fp = os.path.dirname(os.path.abspath(args.input))
 output_directory = args.output if args.output is not None else input_fp
 os.makedirs(output_directory, exist_ok=True)
+if args.debug: console.print(f"Output directory : {output_directory} ", style="bold green")
 
 def check_objects(dataframe):
     if len(dataframe) == 0:
@@ -43,9 +44,7 @@ def check_objects(dataframe):
 # Load the CSV into a dataframe
 df = pd.read_csv(args.input)
 # The CSV header looks like this:
-# header = ['timestamp', 'sequence_number', 'object_id', 'object_class', 'x_position', 'y_position', 'z_position', 
-#           'x_dimension', 'y_dimension', 'z_dimension', 'quaternion_x', 'quaternion_y', 'quaternion_z', 
-#           'velocity_x', 'velocity_y', 'velocity_z']
+# timestamp	sequence_number	lidar_frame_id	lidar_x	lidar_y	lidar_z	object_frame_id	object_id	object_class	x_position	y_position	z_position	x_dimension	y_dimension	z_dimension	quaternion_x	quaternion_y	quaternion_z	quaternion_w	velocity_x	velocity_y	velocity_z
 
 # Counting Area
 if len(args.area) % 4 != 0:
@@ -62,6 +61,7 @@ dangerous_acceleration = args.acceleration_threshold
 ## Object filtering
 class_name_map = {
              1: 'Car',
+             2: 'Truck',
              3: 'Bus',
              5: 'Bike',
              7: 'Ped'}
@@ -83,7 +83,7 @@ df = pd.merge(df, object_class_mode, on='object_id', how='left')
 df['object_class'] = df['most_common_class']
 df.drop(columns=['most_common_class'], inplace=True)
 
-# position filtering
+# Position filtering
 if args.debug: console.print(f"Filtering by detection --area, フィルタリングの前: {len(df)} 個", style='bold yellow')
 df = df[(df['x_position'] >= x_min) & (df['x_position'] <= x_max) & (df['y_position'] >= y_min) & (df['y_position'] <= y_max)]
 if args.debug: console.print(f"Filtered by detection --area, フィルタリングの後: {len(df)} 個", style='bold orange1')
@@ -102,8 +102,8 @@ for i in range(0, len(args.exclusion_area), 4):
 if args.debug: console.print(f"Filtered by --exclusion_area, フィルタリングの後: {len(df)} 個", style='bold orange1')
 check_objects(df)
 
-# relabel class_id 3 (bus) to car.
-df.loc[df['object_class'] == 3, 'object_class'] = 1  # Assuming class_id 1 is car
+# Relabel class_id 3 (bus) to car.
+# df.loc[df['object_class'] == 3, 'object_class'] = 1  # Assuming class_id 1 is car
 
 # Adjusting labels based on dimentions
 min_length = 0.2  
@@ -117,27 +117,26 @@ big_bike_or_ped_condition = (
 )
 df.loc[big_bike_or_ped_condition, 'object_class'] = 1  #
 
-# filtering by distance
+# Filter by track length
 def filter_tracks_by_span(track_df, distance_threshold=min_distance):
     x_span = track_df['x_position'].max() - track_df['x_position'].min()
     y_span = track_df['y_position'].max() - track_df['y_position'].min()
-    if (x_span**2 + y_span**2)**0.5 >= distance_threshold:
-        return track_df
+    track_length = np.sqrt(x_span**2 + y_span**2)
+    return track_length >= distance_threshold
 
-if args.debug: console.print(f"Filtering by track length, フィルタリングの前: {len(df)} 個", style='bold yellow')
-filtered_tracks = df.groupby('object_id', group_keys=False).apply(filter_tracks_by_span).reset_index(drop=True).dropna()
-if args.debug: console.print(f"Filtered by track length, フィルタリングの後: {len(filtered_tracks)} 個", style='bold orange1')
+if args.debug: console.print(f"Filtering by track length --min_distance, フィルタリングの前: {len(df)} 個", style='bold yellow')
+filtered_tracks = df.groupby('object_id').filter(lambda x: filter_tracks_by_span(x))
+if args.debug: console.print(f"Filtered by track length --min_distance, フィルタリングの後: {len(filtered_tracks)} 個", style='bold orange1')
 check_objects(filtered_tracks)
 
 
 # filtering by velocity
 def filter_tracks_by_velocity(track_df, velocity_threshold=max_velocity):
-    if track_df['velocity_x'].abs().max() <= velocity_threshold and track_df['velocity_y'].abs().max() <= velocity_threshold:
-        return track_df
+    return (track_df['velocity_x'].abs().max() <= velocity_threshold and track_df['velocity_y'].abs().max() <= velocity_threshold)
 
 
 if args.debug: console.print(f"Filtering by max velocity, フィルタリングの前: {len(filtered_tracks)} 個", style='bold yellow')
-filtered_tracks = filtered_tracks.groupby('object_id', group_keys=False).apply(filter_tracks_by_velocity).reset_index(drop=True).dropna()
+filtered_tracks = filtered_tracks.groupby('object_id').filter(lambda x: filter_tracks_by_velocity(x))
 if args.debug: console.print(f"Filtered by max velocity, フィルタリングの後: {len(filtered_tracks)} 個", style='bold orange1')
 check_objects(filtered_tracks)
 
@@ -180,7 +179,7 @@ def calculate_object_metrics(group):
 
 # Apply the function to each group and export to CSV
 trajectory_metrics = filtered_tracks.groupby('object_id').apply(calculate_object_metrics)
-trajectory_metrics.to_csv(os.path.join(args.output, 'trajectory_metrics.csv'), index=False)
+trajectory_metrics.to_csv(os.path.join(output_directory, 'trajectory_metrics.csv'), index=False)
 
 # Summary report
 table = Table(title="\n Summary Report")
@@ -235,11 +234,11 @@ def plot_velocity_profile(uuid):
     plt.title(f'Velocity Profile for {uuid}')
     plt.legend()
     plt.tight_layout()
-    plt.savefig(os.path.join(args.output, f'velocity/{uuid}.png'))
+    plt.savefig(os.path.join(output_directory, f'velocity/{uuid}.png'))
     plt.close()
 
 if args.target_id is not None: 
-    os.makedirs(os.path.join(args.output, 'velocity'), exist_ok=True)
+    os.makedirs(os.path.join(output_directory, 'velocity'), exist_ok=True)
     if isinstance(args.target_id, list):
         for uuid in args.target_id:
             plot_velocity_profile(uuid)
