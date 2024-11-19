@@ -8,3 +8,5 @@ sudo apt install -y \
    ros-humble-cyclonedds \
    ros-humble-rmw-implementation \
    ros-humble-rmw-cyclonedds-cpp
+   ros-humble-pcl* \
+   ros-humble-diagnostic-updater
