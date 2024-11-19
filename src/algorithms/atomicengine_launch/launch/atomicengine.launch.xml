@@ -1,11 +1,17 @@
 <?xml version="1.0"?>
 <launch>
-  <arg name="use_sim_time" default="true" />
-  <arg name="lidar_frame" default="velodyne_top" />
-  <arg name="lidar_topic" default="/sensing/lidar/concatenated/pointcloud" />
-  <arg name="output_path" default="/home/map4/atomicengine_output" />
-  <arg name="detection_model" default="apollo" /> <!-- "apollo"か"centerpoint". モデルファイルは"atomicengine_data"にあります。-->
-  <arg name="twist_topic" default="/localization/pose_twist_fusion_filter/twist_with_covariance"/>
+  <arg name="use_sim_time" default="false" />
+  <arg name="lidar_frame" default="hesai" />
+  <arg name="lidar_topic" default="/aw_points" />
+  <arg name="lidar_height" default="2.0" />
+  <arg name="lidar_yaw" default="0.0" />
+  <arg name="lidar_pitch" default="0.0" />
+  <arg name="lidar_roll" default="0.0" />
+  <arg name="output_path" default="/home/autoware/atomicengine_output" />
+  <arg name="detection_model" default="centerpoint" /> <!-- "apollo"か"centerpoint". モデルファイルは"atomicengine_data"にあります。-->
+  <arg name="world_frame_id" default="base_link" />
+  
+  <node pkg="tf2_ros" exec="static_transform_publisher" name="tf_base_link_to_lidar_frame" args="--frame-id $(var world_frame_id) --child-frame-id $(var lidar_frame) --x 0.0 --y 0.0 --z 0.0 --yaw $(var lidar_yaw) --pitch $(var lidar_pitch) --roll $(var lidar_roll) " />
 
   <set_parameter name="use_sim_time" value="$(var use_sim_time)" />
 
@@ -14,8 +20,8 @@
     <include file="$(find-pkg-share map4_lidar_apollo_instance_segmentation)/launch/lidar_apollo_instance_segmentation.launch.xml">
       <arg name="input/pointcloud" value="$(var lidar_topic)" />
       <arg name="output/objects" value="/clusters" />
-      <arg name="target_frame" value="base_link" />
-      <arg name="z_offset" value="-2.0" />
+      <arg name="target_frame" value="$(var lidar_frame)" />
+      <arg name="z_offset" value="-$(var lidar_height)" />
       <arg name="x_offset" value="0.0" />
     </include>
 
@@ -47,6 +53,7 @@
   <node pkg="map4_multi_object_tracker" exec="multi_object_tracker_node" name="multi_object_tracker_node" output="screen">
     <param name="selected_input_channels" value="['detected_objects']"/>
     <remap from="output" to="/tracked_objects"/>
+    <param name="world_frame_id" value="$(var world_frame_id)" /> 
     <param from="$(var tracker_setting_path)"/>
     <param from="$(var data_association_matrix_path)"/>
     <param from="$(var input_channels_path)"/>
@@ -54,9 +61,8 @@
 
   <node pkg="objects_to_csv" exec="tracked_objects_to_csv" output="screen">
     <param name="input_topic" value="/tracked_objects"/>
-    <param name="twist_topic" value="$(var twist_topic)"/>
     <param name="csv_directory_path" value="$(var output_path)"/>
-    <param name="lidar_frame" value="$(var lidar_frame)"/>
+    <param name="lidar_frame" value="$(var world_frame_id)"/>
   </node>
 
 </launch>
