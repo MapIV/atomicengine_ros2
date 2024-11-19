@@ -1,0 +1,13 @@
+[Unit]
+Description=MAP IV enp3s0 PTP service LIVOX
+Documentation=man:ptp4l
+After=network.target
+Requires=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/ptp4l -i enp3s0 -m -S -f /usr/share/doc/linuxptp/configs/automotive-master.cfg --step_threshold=1
+
+[Install]
+WantedBy=multi-user.target
+

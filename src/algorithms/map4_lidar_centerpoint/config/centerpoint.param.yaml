@@ -16,5 +16,5 @@
       score_threshold: 0.35
       yaw_norm_thresholds: [0.3, 0.3, 0.3, 0.3, 0.0]
     densification_params:
-      world_frame_id: map
+      world_frame_id: base_link
       num_past_frames: 1
